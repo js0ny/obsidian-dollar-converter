@@ -17,11 +17,12 @@ export class ConversionCommands {
 		try {
 			const from = editor.getCursor('from');
 			const to = editor.getCursor('to');
-			const value = editor.getValue();
 			const start = editor.posToOffset(from);
 			const end = editor.posToOffset(to);
-			const combined = value.slice(0, start) + text + value.slice(end);
-			const result = convertRange(combined, start, start + text.length, source, this.plugin.transforms);
+			const state = this.plugin.syntax.state(editor);
+			const candidate = state.update({ changes: { from: start, to: end, insert: text }, filter: false }).state;
+			const insertedLength = candidate.doc.length - (state.doc.length - (end - start));
+			const result = convertRange(candidate, start, start + insertedLength, source, this.plugin.transforms);
 			if (result.count === 0) return;
 			event.preventDefault();
 			editor.replaceRange(result.text, from, to);
@@ -53,7 +54,7 @@ export class ConversionCommands {
 		}
 		try {
 			const source = wholeDocument ? 'document-command' : 'selection-command';
-			const result = convertRange(value, from, to, source, this.plugin.transforms);
+			const result = convertRange(this.plugin.syntax.state(editor), from, to, source, this.plugin.transforms);
 			if (result.count) {
 				editor.replaceRange(result.text, editor.offsetToPos(from), editor.offsetToPos(to));
 				inserted = true;

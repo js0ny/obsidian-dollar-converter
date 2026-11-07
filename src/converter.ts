@@ -1,3 +1,7 @@
+import type { EditorState } from '@codemirror/state';
+import { transformBody } from './formula-body';
+import { parseMarkdown } from './markdown';
+
 export type Source = string;
 export type MathTransform = (
 	body: string,
@@ -11,8 +15,6 @@ export interface FormulaRange {
 
 interface Edit extends FormulaRange {
 	replacement: string;
-	formulaFrom: number;
-	formulaTo: number;
 }
 
 export interface ConversionResult {
@@ -27,141 +29,60 @@ function isEscaped(text: string, index: number): boolean {
 	return count % 2 === 1;
 }
 
-function findClosing(text: string, token: string, start: number): number {
-	let index = text.indexOf(token, start);
-	while (index !== -1 && isEscaped(text, index)) {
-		index = text.indexOf(token, index + token.length);
-	}
-	return index;
-}
-
-function fenceEnd(text: string, start: number, marker: string, length: number): number {
-	let lineStart = text.indexOf('\n', start);
-	while (lineStart !== -1) {
-		lineStart++;
-		const lineEnd = text.indexOf('\n', lineStart);
-		const line = text.slice(lineStart, lineEnd === -1 ? text.length : lineEnd);
-		const run = /^ {0,3}(`{3,}|~{3,})[ \t]*\r?$/.exec(line)?.[1];
-		if (run && run.startsWith(marker) && run.length >= length) {
-			return lineEnd === -1 ? text.length : lineEnd + 1;
-		}
-		if (lineEnd === -1) break;
-		lineStart = lineEnd;
-	}
-	return text.length;
-}
-
-function backtickRun(text: string, start: number): number {
-	let end = start;
-	while (text[end] === '`') end++;
-	return end - start;
-}
-
-function inlineCodeEnd(text: string, start: number, length: number): number {
-	let index = start + length;
-	while (index < text.length) {
-		index = text.indexOf('`', index);
-		if (index === -1) return text.length;
-		const run = backtickRun(text, index);
-		if (run === length) return index + run;
-		index += run;
-	}
-	return text.length;
-}
-
 export function convertRange(
-	text: string,
+	state: EditorState,
 	from: number,
 	to: number,
 	source: Source,
 	transforms: Iterable<MathTransform>,
 ): ConversionResult {
+	const text = state.doc.toString();
+	const syntax = parseMarkdown(state);
 	const edits: Edit[] = [];
-	let index = 0;
-	if (/^---\r?\n/.test(text)) {
-		const closing = /\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/g;
-		closing.lastIndex = text.indexOf('\n');
-		index = closing.exec(text) ? closing.lastIndex : text.length;
+	const delimiters = /\\[()[\]]/g;
+	let opener: { from: number; display: boolean } | undefined;
+	let protectedIndex = 0;
+	let match: RegExpExecArray | null;
+	while ((match = delimiters.exec(text)) && match.index < to) {
+		const index = match.index;
+		let protectedRange = syntax.protectedRanges[protectedIndex];
+		while (protectedRange && protectedRange.to <= index) {
+			if (opener && protectedRange.to > opener.from) opener = undefined;
+			protectedRange = syntax.protectedRanges[++protectedIndex];
+		}
+		if (protectedRange && protectedRange.from < index + 2) {
+			opener = undefined;
+			continue;
+		}
+		if (isEscaped(text, index)) continue;
+		const marker = match[0].charAt(1);
+		if (!opener) {
+			if (marker === '(' || marker === '[') opener = { from: index, display: marker === '[' };
+			continue;
+		}
+		if (marker !== (opener.display ? ']' : ')')) continue;
+		const end = index + 2;
+		if (opener.from >= from && end <= to) {
+			const body = transformBody(state, syntax, opener.from + 2, index, opener.display, source, transforms);
+			if (body !== null) {
+				const delimiter = opener.display ? '$$' : '$';
+				edits.push({ from: opener.from, to: end, replacement: delimiter + body + delimiter });
+			}
+		}
+		opener = undefined;
 	}
-	while (index < to) {
-		if (index === 0 || text[index - 1] === '\n') {
-			const fence = /^ {0,3}(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(text.slice(index))?.[1];
-			if (fence) {
-				index = fenceEnd(text, index, fence.charAt(0), fence.length);
-				continue;
-			}
-			const indented = /^(?: {4}|\t)[^\n]*(?:\n|$)/.exec(text.slice(index));
-			if (indented) {
-				index += indented[0].length;
-				continue;
-			}
-		}
-		if (isEscaped(text, index)) {
-			index++;
-			continue;
-		}
-		if (text[index] === '`') {
-			index = inlineCodeEnd(text, index, backtickRun(text, index));
-			continue;
-		}
-		if (text[index] === '$') {
-			const token = text[index + 1] === '$' ? '$$' : '$';
-			const end = findClosing(text, token, index + token.length);
-			index = end === -1 ? text.length : end + token.length;
-			continue;
-		}
-		const opener = text.slice(index, index + 2);
-		if (opener !== '\\(' && opener !== '\\[') {
-			index++;
-			continue;
-		}
-		const display = opener === '\\[';
-		const closing = findClosing(text, display ? '\\]' : '\\)', index + 2);
-		if (closing === -1) {
-			index += 2;
-			continue;
-		}
-		const end = closing + 2;
-		if (index >= from && end <= to) {
-			let body = text.slice(index + 2, closing).trim();
-			if (!body || (!display && /[\r\n]/.test(body))) {
-				index = end;
-				continue;
-			}
-			const context = Object.freeze({ kind: display ? 'display' as const : 'inline' as const, source });
-			for (const transform of transforms) {
-				body = transform(body, context);
-				if (typeof body !== 'string') {
-					throw new TypeError('Formula transforms must return a string synchronously.');
-				}
-			}
-			if (!body.trim() || (!display && /[\r\n]/.test(body))) {
-				throw new Error('The formula transform returned an empty or multiline inline formula.');
-			}
-			const prefix = index > 0 && text[index - 1] !== '\n' ? '\n' : '';
-			const suffix = end < text.length && text[end] !== '\n' ? '\n' : '';
-			const replacement = display ? `${prefix}$$\n${body}\n$$${suffix}` : `$${body}$`;
-			edits.push({
-				from: index - from,
-				to: end - from,
-				replacement,
-				formulaFrom: display ? prefix.length : 0,
-				formulaTo: replacement.length - (display ? suffix.length : 0),
-			});
-		}
-		index = end;
-	}
+	if (!edits.length) return { text: text.slice(from, to), count: 0, formulas: [] };
 	const parts: string[] = [];
 	const formulas: FormulaRange[] = [];
 	let cursor = from;
 	let length = 0;
 	for (const edit of edits) {
-		const preceding = text.slice(cursor, from + edit.from);
+		const preceding = text.slice(cursor, edit.from);
 		parts.push(preceding, edit.replacement);
 		length += preceding.length;
-		formulas.push({ from: length + edit.formulaFrom, to: length + edit.formulaTo });
+		formulas.push({ from: length, to: length + edit.replacement.length });
 		length += edit.replacement.length;
-		cursor = from + edit.to;
+		cursor = edit.to;
 	}
 	parts.push(text.slice(cursor, to));
 	return { text: parts.join(''), count: edits.length, formulas };

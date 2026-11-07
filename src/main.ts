@@ -2,6 +2,7 @@ import { Events, Plugin } from 'obsidian';
 import { ConversionCommands } from './commands';
 import { convertRange } from './converter';
 import type { MathTransform, Source } from './converter';
+import { EditorSyntax } from './markdown';
 import { DEFAULT_SETTINGS, DollarConverterSettingTab } from './settings';
 import type { DollarConverterSettings } from './settings';
 
@@ -9,9 +10,11 @@ export default class DollarConverterPlugin extends Plugin {
 	settings: DollarConverterSettings = { ...DEFAULT_SETTINGS };
 	transforms = new Set<MathTransform>();
 	events = new Events();
+	readonly syntax = new EditorSyntax();
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
+		this.registerEditorExtension(this.syntax.extension);
 		const commands = new ConversionCommands(this);
 		this.register(() => this.transforms.clear());
 		this.addSettingTab(new DollarConverterSettingTab(this.app, this));
@@ -43,7 +46,14 @@ export default class DollarConverterPlugin extends Plugin {
 	}
 
 	transformText(text: string, source: Source = 'api') {
-		return convertRange(text, 0, text.length, source, this.transforms);
+		const editor = this.app.workspace.activeEditor?.editor;
+		if (!editor) throw new Error('Open a Markdown editor before converting text.');
+		const state = this.syntax.state(editor);
+		const candidate = state.update({
+			changes: { from: 0, to: state.doc.length, insert: text },
+			filter: false,
+		}).state;
+		return convertRange(candidate, 0, candidate.doc.length, source, this.transforms);
 	}
 
 	async loadSettings(): Promise<void> {
