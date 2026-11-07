@@ -1,114 +1,60 @@
-import {
-	Editor,
-	MarkdownView,
-	MarkdownFileInfo,
-	Modal,
-	Notice,
-	Plugin,
-} from 'obsidian';
-import {
-	DEFAULT_SETTINGS,
-	MyPluginSettings,
-	SampleSettingTab,
-} from './settings';
+import { Events, Plugin } from 'obsidian';
+import { ConversionCommands } from './commands';
+import { convertRange } from './converter';
+import type { MathTransform, Source } from './converter';
+import { DEFAULT_SETTINGS, DollarConverterSettingTab } from './settings';
+import type { DollarConverterSettings } from './settings';
 
-// Remember to rename these classes and interfaces!
+export default class DollarConverterPlugin extends Plugin {
+	settings: DollarConverterSettings = { ...DEFAULT_SETTINGS };
+	transforms = new Set<MathTransform>();
+	events = new Events();
 
-export default class MyPlugin extends Plugin {
-	settings!: MyPluginSettings;
-
-	async onload() {
+	async onload(): Promise<void> {
 		await this.loadSettings();
-
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
+		const commands = new ConversionCommands(this);
+		this.register(() => this.transforms.clear());
+		this.addSettingTab(new DollarConverterSettingTab(this.app, this));
+		this.registerEvent(this.app.workspace.on('editor-paste', (event, editor) => {
+			if (!this.settings.paste || event.defaultPrevented) return;
+			const text = event.clipboardData?.getData('text/plain');
+			if (text) void commands.insertConverted(event, editor, text, 'paste');
+		}));
+		this.registerEvent(this.app.workspace.on('editor-menu', (menu, editor) => {
+			if (!editor.somethingSelected()) return;
+			menu.addItem(item => item.setTitle('Convert bracket maths in selection')
+				.onClick(() => commands.convertEditor(editor, false)));
+		}));
 		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			},
+			id: 'convert-selection',
+			name: 'Convert bracket maths in selection',
+			editorCallback: editor => commands.convertEditor(editor, false),
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
 		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (
-				editor: Editor,
-				_ctx: MarkdownView | MarkdownFileInfo,
-			) => {
-				editor.replaceSelection('Sample editor command');
-			},
+			id: 'convert-document',
+			name: 'Convert bracket maths in current note',
+			editorCallback: editor => commands.convertEditor(editor, true),
 		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView =
-					this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			},
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(activeDocument, 'click', (_evt: MouseEvent) => {
-			new Notice('Click');
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(
-			window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000),
-		);
 	}
 
-	onunload() {}
+	registerMathTransform(transform: MathTransform): () => boolean {
+		this.transforms.add(transform);
+		return () => this.transforms.delete(transform);
+	}
 
-	async loadSettings() {
+	transformText(text: string, source: Source = 'api') {
+		return convertRange(text, 0, text.length, source, this.transforms);
+	}
+
+	async loadSettings(): Promise<void> {
 		this.settings = Object.assign(
 			{},
 			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<MyPluginSettings>,
+			(await this.loadData()) as Partial<DollarConverterSettings>,
 		);
 	}
 
-	async saveSettings() {
+	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	onOpen() {
-		const { contentEl } = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const { contentEl } = this;
-		contentEl.empty();
 	}
 }

@@ -3,7 +3,7 @@
     "name": "Math Dollar Converter",
     "version": "1.0.0",
     "minAppVersion": "1.0.0",
-    "description": "Demonstrates some of the capabilities of the Obsidian API.",
+    "description": "Convert bracket maths to dollar-delimited formulae on paste or by command.",
     "author": "js0ny",
     "authorUrl": "https://github.com/js0ny",
     "fundingUrl": "https://obsidian.md/pricing",

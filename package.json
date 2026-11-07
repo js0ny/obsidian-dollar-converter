@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "math-dollar-converter",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Convert bracket maths to dollar-delimited formulae in Obsidian.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
