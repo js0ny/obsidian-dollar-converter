@@ -9,7 +9,7 @@ interface CommandRegistry {
 }
 
 export class ConversionCommands {
-	constructor(private readonly plugin: DollarConverterPlugin) {}
+	constructor(private readonly plugin: DollarConverterPlugin) { }
 
 	async insertConverted(event: ClipboardEvent, editor: Editor, text: string, source: Source): Promise<void> {
 		let inserted = false;

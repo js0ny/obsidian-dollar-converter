@@ -21,15 +21,12 @@
             nodejs
             pnpm
           ];
-          devDeps = with pkgs; [ ];
+          devDeps = with pkgs; [ vtsls ];
         in
         {
           default = pkgs.mkShell {
             buildInputs = ciDeps ++ devDeps;
             shellHook = /* bash */ "";
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-              pkgs.stdenv.cc.cc.lib
-            ];
           };
         }
       );
