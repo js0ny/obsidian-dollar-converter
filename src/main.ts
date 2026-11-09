@@ -1,4 +1,4 @@
-import { Events, Plugin } from 'obsidian';
+import { Events, htmlToMarkdown, Plugin } from 'obsidian';
 import { ConversionCommands } from './commands';
 import { convertRange } from './converter';
 import type { MathTransform, Source } from './converter';
@@ -20,6 +20,16 @@ export default class DollarConverterPlugin extends Plugin {
 		this.addSettingTab(new DollarConverterSettingTab(this.app, this));
 		this.registerEvent(this.app.workspace.on('editor-paste', (event, editor) => {
 			if (!this.settings.paste || event.defaultPrevented) return;
+			const html = event.clipboardData?.getData('text/html');
+			if (html) {
+				try {
+					const markdown = htmlToMarkdown(html);
+					if (markdown) void commands.insertConverted(event, editor, markdown, 'paste');
+				} catch (error) {
+					console.error('Math Dollar Converter: HTML conversion failed:', error);
+				}
+				return;
+			}
 			const text = event.clipboardData?.getData('text/plain');
 			if (text) void commands.insertConverted(event, editor, text, 'paste');
 		}));
